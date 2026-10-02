@@ -1,0 +1,591 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+}
+
+enum DependentAccessRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+enum DependentRelationship {
+  PARENT
+  LEGAL_GUARDIAN
+  OTHER
+}
+
+enum AuditAction {
+  USER_CREATED
+  DEPENDENT_CREATED
+  DEPENDENT_UPDATED
+  DEPENDENT_DELETED
+  CONSENT_ACCEPTED
+  SESSION_CREATED
+  SESSION_REVOKED
+  ALL_SESSIONS_REVOKED
+  REFRESH_ROTATED
+  REFRESH_REUSE_DETECTED
+  EMAIL_VERIFIED
+  PASSWORD_RESET
+  CONSENT_REVOKED
+  DATA_EXPORTED
+  ACCOUNT_DELETION_REQUESTED
+  MEDICATION_CREATED
+  MEDICATION_UPDATED
+  MEDICATION_DELETED
+  MEDICATION_TREATMENT_CREATED
+  MEDICATION_TREATMENT_UPDATED
+  MEDICATION_TREATMENT_DELETED
+  APPOINTMENT_CREATED
+  APPOINTMENT_UPDATED
+  APPOINTMENT_DELETED
+  MEDICAL_RECOMMENDATION_CREATED
+  MEDICAL_RECOMMENDATION_UPDATED
+  MEDICAL_RECOMMENDATION_DELETED
+  DOCUMENT_UPLOADED
+  DOCUMENT_UPDATED
+  DOCUMENT_DELETED
+  DOCUMENT_VIEWED
+  DOCUMENT_DOWNLOADED
+  VACCINATION_CREATED
+  VACCINATION_UPDATED
+  VACCINATION_DELETED
+  SCHOOL_ENROLLMENT_CREATED
+  SCHOOL_ENROLLMENT_UPDATED
+  SCHOOL_ENROLLMENT_DELETED
+  SCHOOL_REPORT_CREATED
+  SCHOOL_REPORT_UPDATED
+  SCHOOL_REPORT_DELETED
+}
+
+enum AuditResourceType {
+  USER
+  DEPENDENT
+  CONSENT
+  SESSION
+  PRIVACY_EXPORT
+  ACCOUNT_DELETION_REQUEST
+  MEDICATION
+  MEDICATION_TREATMENT
+  APPOINTMENT
+  MEDICAL_RECOMMENDATION
+  DOCUMENT
+  DEPENDENT_VACCINATION
+  SCHOOL_ENROLLMENT
+  SCHOOL_REPORT
+}
+
+model User {
+  id                       String                  @id @default(uuid()) @db.Uuid
+  name                     String                  @db.VarChar(120)
+  email                    String                  @unique @db.VarChar(254)
+  passwordHash             String                  @map("password_hash") @db.VarChar(255)
+  status                   UserStatus              @default(ACTIVE)
+  emailVerifiedAt          DateTime?               @map("email_verified_at") @db.Timestamptz(3)
+  createdAt                DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt                DateTime?               @map("deleted_at") @db.Timestamptz(3)
+  careTasks                CareTask[]
+  createdDependents        Dependent[]
+  dependentAccess          UserDependentAccess[]
+  consents                 Consent[]
+  auditLogs                AuditLog[]
+  credentialVersion        Int                     @default(0) @map("credential_version")
+  sessions                 AuthSession[]
+  accountTokens            AccountToken[]
+  privacyExports           PrivacyExportRecord[]
+  deletionRequest          AccountDeletionRequest?
+  createdDocuments         Document[]
+  createdVaccinations      DependentVaccination[]
+  createdSchoolEnrollments SchoolEnrollment[]
+  createdSchoolReports     SchoolReport[]
+
+  @@map("users")
+}
+
+enum AuthenticationMethod {
+  PASSWORD
+}
+
+enum AccountTokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+model AuthSession {
+  id                   String               @id @default(uuid()) @db.Uuid
+  userId               String               @map("user_id") @db.Uuid
+  credentialVersion    Int                  @map("credential_version")
+  authenticationMethod AuthenticationMethod @default(PASSWORD) @map("authentication_method")
+  createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt            DateTime             @map("expires_at") @db.Timestamptz(3)
+  revokedAt            DateTime?            @map("revoked_at") @db.Timestamptz(3)
+  user                 User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+  refreshCredentials   RefreshCredential[]
+
+  @@index([userId, revokedAt, expiresAt])
+  @@index([expiresAt])
+  @@map("auth_sessions")
+}
+
+model RefreshCredential {
+  id        String      @id @default(uuid()) @db.Uuid
+  sessionId String      @map("session_id") @db.Uuid
+  tokenHash String      @unique @map("token_hash") @db.Char(64)
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt DateTime    @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime?   @map("used_at") @db.Timestamptz(3)
+  session   AuthSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@index([sessionId])
+  @@index([expiresAt])
+  @@map("refresh_credentials")
+}
+
+model AccountToken {
+  id                String              @id @default(uuid()) @db.Uuid
+  userId            String              @map("user_id") @db.Uuid
+  purpose           AccountTokenPurpose
+  tokenHash         String              @unique @map("token_hash") @db.Char(64)
+  credentialVersion Int                 @map("credential_version")
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt         DateTime            @map("expires_at") @db.Timestamptz(3)
+  usedAt            DateTime?           @map("used_at") @db.Timestamptz(3)
+  revokedAt         DateTime?           @map("revoked_at") @db.Timestamptz(3)
+  user              User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, purpose, usedAt, revokedAt])
+  @@index([expiresAt])
+  @@map("account_tokens")
+}
+
+model AuthRateBucket {
+  key             String   @id @db.Char(64)
+  count           Int
+  windowStartedAt DateTime @map("window_started_at") @db.Timestamptz(3)
+  expiresAt       DateTime @map("expires_at") @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@map("auth_rate_buckets")
+}
+
+model CareTask {
+  id          String   @id @default(uuid()) @db.Uuid
+  title       String   @db.VarChar(160)
+  description String   @db.VarChar(2000)
+  completed   Boolean  @default(false)
+  ownerId     String   @map("owner_id") @db.Uuid
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([ownerId, createdAt, id])
+  @@map("care_tasks")
+}
+
+model Dependent {
+  id                     String                  @id @default(uuid()) @db.Uuid
+  fullName               String                  @map("full_name") @db.VarChar(120)
+  preferredName          String?                 @map("preferred_name") @db.VarChar(120)
+  birthDate              DateTime                @map("birth_date") @db.Date
+  createdByUserId        String                  @map("created_by_user_id") @db.Uuid
+  createdBy              User                    @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  createdAt              DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt              DateTime?               @map("deleted_at") @db.Timestamptz(3)
+  access                 UserDependentAccess[]
+  consents               Consent[]
+  auditLogs              AuditLog[]
+  medications            Medication[]
+  medicationTreatments   MedicationTreatment[]
+  appointments           Appointment[]
+  medicalRecommendations MedicalRecommendation[]
+  documents              Document[]
+  vaccinations           DependentVaccination[]
+  schoolEnrollments      SchoolEnrollment[]
+  schoolReports          SchoolReport[]
+
+  @@index([createdAt, id])
+  @@map("dependents")
+}
+
+model UserDependentAccess {
+  id           String                 @id @default(uuid()) @db.Uuid
+  userId       String                 @map("user_id") @db.Uuid
+  dependentId  String                 @map("dependent_id") @db.Uuid
+  role         DependentAccessRole
+  relationship DependentRelationship?
+  createdAt    DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  revokedAt    DateTime?              @map("revoked_at") @db.Timestamptz(3)
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Restrict)
+  dependent    Dependent              @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, dependentId])
+  @@index([dependentId, role])
+  @@map("user_dependent_access")
+}
+
+model Consent {
+  id            String     @id @default(uuid()) @db.Uuid
+  userId        String     @map("user_id") @db.Uuid
+  dependentId   String?    @map("dependent_id") @db.Uuid
+  type          String     @db.VarChar(64)
+  policyVersion String     @map("policy_version") @db.VarChar(64)
+  acceptedAt    DateTime   @default(now()) @map("accepted_at") @db.Timestamptz(3)
+  revokedAt     DateTime?  @map("revoked_at") @db.Timestamptz(3)
+  consentBased  Boolean    @default(false) @map("consent_based")
+  metadata      Json
+  user          User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  dependent     Dependent? @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+
+  @@index([userId, acceptedAt, id])
+  @@index([dependentId])
+  @@index([userId, type, dependentId, revokedAt])
+  @@map("consents")
+}
+
+enum AccountDeletionStatus {
+  PENDING_REVIEW
+}
+
+enum PrivacyExportFormat {
+  JSON
+}
+
+model PrivacyExportRecord {
+  id        String              @id @default(uuid()) @db.Uuid
+  userId    String              @map("user_id") @db.Uuid
+  format    PrivacyExportFormat @default(JSON)
+  createdAt DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt, id])
+  @@map("privacy_export_records")
+}
+
+model AccountDeletionRequest {
+  id                   String                @id @default(uuid()) @db.Uuid
+  userId               String                @unique @map("user_id") @db.Uuid
+  status               AccountDeletionStatus @default(PENDING_REVIEW)
+  requestedAt          DateTime              @default(now()) @map("requested_at") @db.Timestamptz(3)
+  retentionNotBeforeAt DateTime?             @map("retention_not_before_at") @db.Timestamptz(3)
+  retentionPolicy      Json                  @map("retention_policy")
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([status, requestedAt])
+  @@map("account_deletion_requests")
+}
+
+model AuditLog {
+  id           String            @id @default(uuid()) @db.Uuid
+  actorId      String            @map("actor_id") @db.Uuid
+  action       AuditAction
+  resourceType AuditResourceType @map("resource_type")
+  resourceId   String            @map("resource_id") @db.Uuid
+  dependentId  String?           @map("dependent_id") @db.Uuid
+  timestamp    DateTime          @default(now()) @db.Timestamptz(3)
+  metadata     Json
+  actor        User              @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  dependent    Dependent?        @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+
+  @@index([actorId, timestamp, id])
+  @@index([dependentId, timestamp, id])
+  @@map("audit_logs")
+}
+
+enum MedicationTreatmentStatus {
+  ACTIVE
+  COMPLETED
+  SUSPENDED
+}
+
+enum MedicalRecommendationStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum DocumentCategory {
+  PRESCRIPTION
+  MEDICAL_REPORT
+  EXAM
+  MEDICAL_CERTIFICATE
+  SCHOOL_REPORT
+  VACCINE_RECORD
+  OTHER
+}
+
+// Somente metadados. Bytes permanecem em storage privado, após validação/scan.
+model Document {
+  id               String                 @id @default(uuid()) @db.Uuid
+  dependentId      String                 @map("dependent_id") @db.Uuid
+  category         DocumentCategory
+  title            String                 @db.VarChar(160)
+  description      String?                @db.VarChar(2000)
+  storageKey       String                 @unique @map("storage_key") @db.VarChar(100)
+  originalFileName String                 @map("original_file_name") @db.VarChar(180)
+  mimeType         String                 @map("mime_type") @db.VarChar(100)
+  size             Int
+  checksum         String                 @db.Char(64)
+  createdByUserId  String                 @map("created_by_user_id") @db.Uuid
+  documentDate     DateTime?              @map("document_date") @db.Date
+  scannedAt        DateTime               @map("scanned_at") @db.Timestamptz(3)
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt        DateTime?              @map("deleted_at") @db.Timestamptz(3)
+  dependent        Dependent              @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+  createdBy        User                   @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  vaccinations     DependentVaccination[]
+  schoolReports    SchoolReport[]
+
+  @@unique([id, dependentId])
+  @@index([dependentId, deletedAt, createdAt, id])
+  @@index([createdByUserId])
+  @@map("documents")
+}
+
+enum VaccineScheduleType {
+  PUBLIC
+  PRIVATE_COMPLEMENTARY
+}
+
+// Informações escolares fornecidas pelo responsável, sem conta institucional.
+model SchoolEnrollment {
+  id              String         @id @default(uuid()) @db.Uuid
+  dependentId     String         @map("dependent_id") @db.Uuid
+  schoolName      String         @map("school_name") @db.VarChar(160)
+  schoolYear      Int            @map("school_year")
+  grade           String?        @db.VarChar(120)
+  className       String?        @map("class_name") @db.VarChar(80)
+  startDate       DateTime       @map("start_date") @db.Date
+  endDate         DateTime?      @map("end_date") @db.Date
+  createdByUserId String         @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  dependent       Dependent      @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+  createdBy       User           @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  reports         SchoolReport[]
+
+  @@unique([id, dependentId])
+  @@index([dependentId, deletedAt, createdAt, id])
+  @@index([createdByUserId])
+  @@map("school_enrollments")
+}
+
+model SchoolReport {
+  id              String            @id @default(uuid()) @db.Uuid
+  dependentId     String            @map("dependent_id") @db.Uuid
+  enrollmentId    String?           @map("enrollment_id") @db.Uuid
+  title           String            @db.VarChar(160)
+  reportDate      DateTime          @map("report_date") @db.Date
+  summary         String?           @db.VarChar(2000)
+  observations    String?           @db.VarChar(2000)
+  documentId      String?           @map("document_id") @db.Uuid
+  createdByUserId String            @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime?         @map("deleted_at") @db.Timestamptz(3)
+  dependent       Dependent         @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+  enrollment      SchoolEnrollment? @relation(fields: [enrollmentId, dependentId], references: [id, dependentId], onDelete: Restrict)
+  document        Document?         @relation(fields: [documentId, dependentId], references: [id, dependentId], onDelete: Restrict)
+  createdBy       User              @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([dependentId, deletedAt, createdAt, id])
+  @@index([dependentId, deletedAt, reportDate, id])
+  @@index([enrollmentId, dependentId])
+  @@index([documentId, dependentId])
+  @@index([createdByUserId])
+  @@map("school_reports")
+}
+
+enum VaccineRuleModel {
+  BIRTH_AGE_FIXED_V1
+}
+
+// Referências versionadas, inicialmente vazias. Não são criadas pela API do titular.
+model VaccineCatalog {
+  id            String                 @id @default(uuid()) @db.Uuid
+  code          String                 @db.VarChar(80)
+  name          String                 @db.VarChar(160)
+  source        String                 @db.VarChar(500)
+  sourceVersion String                 @map("source_version") @db.VarChar(80)
+  validFrom     DateTime               @map("valid_from") @db.Date
+  validUntil    DateTime?              @map("valid_until") @db.Date
+  reviewedAt    DateTime?              @map("reviewed_at") @db.Timestamptz(3)
+  createdAt     DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime?              @map("deleted_at") @db.Timestamptz(3)
+  scheduleDoses VaccineScheduleDose[]
+  vaccinations  DependentVaccination[]
+
+  @@unique([source, sourceVersion, code])
+  @@index([deletedAt, reviewedAt, name, id])
+  @@map("vaccine_catalog")
+}
+
+model VaccineSchedule {
+  id            String                @id @default(uuid()) @db.Uuid
+  name          String                @db.VarChar(160)
+  type          VaccineScheduleType
+  ruleModel     VaccineRuleModel      @default(BIRTH_AGE_FIXED_V1) @map("rule_model")
+  source        String                @db.VarChar(500)
+  sourceVersion String                @map("source_version") @db.VarChar(80)
+  validFrom     DateTime              @map("valid_from") @db.Date
+  validUntil    DateTime?             @map("valid_until") @db.Date
+  reviewedAt    DateTime?             @map("reviewed_at") @db.Timestamptz(3)
+  createdAt     DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime?             @map("deleted_at") @db.Timestamptz(3)
+  doses         VaccineScheduleDose[]
+
+  @@unique([source, sourceVersion, type])
+  @@index([deletedAt, reviewedAt, type, validFrom, id])
+  @@map("vaccine_schedules")
+}
+
+model VaccineScheduleDose {
+  id           String          @id @default(uuid()) @db.Uuid
+  scheduleId   String          @map("schedule_id") @db.Uuid
+  vaccineId    String          @map("vaccine_id") @db.Uuid
+  dose         String          @db.VarChar(40)
+  dueAgeMonths Int             @map("due_age_months")
+  dueAgeDays   Int             @map("due_age_days")
+  schedule     VaccineSchedule @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  vaccine      VaccineCatalog  @relation(fields: [vaccineId], references: [id], onDelete: Restrict)
+
+  @@unique([scheduleId, vaccineId, dose])
+  @@index([scheduleId, dueAgeMonths, dueAgeDays, id])
+  @@index([vaccineId])
+  @@map("vaccine_schedule_doses")
+}
+
+model DependentVaccination {
+  id              String         @id @default(uuid()) @db.Uuid
+  dependentId     String         @map("dependent_id") @db.Uuid
+  vaccineId       String         @map("vaccine_id") @db.Uuid
+  dose            String         @db.VarChar(40)
+  administeredAt  DateTime       @map("administered_at") @db.Date
+  institutionName String?        @map("institution_name") @db.VarChar(160)
+  batchNumber     String?        @map("batch_number") @db.VarChar(80)
+  notes           String?        @db.VarChar(2000)
+  documentId      String?        @map("document_id") @db.Uuid
+  createdByUserId String         @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime?      @map("deleted_at") @db.Timestamptz(3)
+  dependent       Dependent      @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+  vaccine         VaccineCatalog @relation(fields: [vaccineId], references: [id], onDelete: Restrict)
+  document        Document?      @relation(fields: [documentId, dependentId], references: [id, dependentId], onDelete: Restrict)
+  createdBy       User           @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([dependentId, deletedAt, createdAt, id])
+  @@index([dependentId, deletedAt, administeredAt, id])
+  @@index([documentId, dependentId])
+  @@index([vaccineId])
+  @@index([createdByUserId])
+  @@map("dependent_vaccinations")
+}
+
+// Registro informado pelo responsável, não confirmação de atendimento.
+model Appointment {
+  id               String                  @id @default(uuid()) @db.Uuid
+  dependentId      String                  @map("dependent_id") @db.Uuid
+  date             DateTime                @db.Timestamptz(3)
+  specialty        String?                 @db.VarChar(120)
+  professionalName String?                 @map("professional_name") @db.VarChar(120)
+  institutionName  String?                 @map("institution_name") @db.VarChar(160)
+  reason           String                  @db.VarChar(500)
+  notes            String?                 @db.VarChar(2000)
+  followUpDate     DateTime?               @map("follow_up_date") @db.Timestamptz(3)
+  createdAt        DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt        DateTime?               @map("deleted_at") @db.Timestamptz(3)
+  dependent        Dependent               @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+  recommendations  MedicalRecommendation[]
+
+  @@unique([id, dependentId])
+  @@index([dependentId, deletedAt, createdAt, id])
+  @@index([dependentId, deletedAt, date, id])
+  @@map("appointments")
+}
+
+model MedicalRecommendation {
+  id            String                      @id @default(uuid()) @db.Uuid
+  dependentId   String                      @map("dependent_id") @db.Uuid
+  appointmentId String                      @map("appointment_id") @db.Uuid
+  title         String                      @db.VarChar(160)
+  description   String                      @db.VarChar(2000)
+  status        MedicalRecommendationStatus @default(PENDING)
+  startDate     DateTime                    @map("start_date") @db.Date
+  endDate       DateTime?                   @map("end_date") @db.Date
+  completedAt   DateTime?                   @map("completed_at") @db.Timestamptz(3)
+  createdAt     DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime                    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime?                   @map("deleted_at") @db.Timestamptz(3)
+  dependent     Dependent                   @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+  appointment   Appointment                 @relation(fields: [appointmentId, dependentId], references: [id, dependentId], onDelete: Restrict)
+
+  @@index([dependentId, deletedAt, createdAt, id])
+  @@index([dependentId, deletedAt, status, completedAt, id])
+  @@index([appointmentId, dependentId, deletedAt, createdAt, id])
+  @@map("medical_recommendations")
+}
+
+// Produto privado do dependente, não catálogo clínico global.
+model Medication {
+  id          String                @id @default(uuid()) @db.Uuid
+  dependentId String                @map("dependent_id") @db.Uuid
+  name        String                @db.VarChar(160)
+  createdAt   DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime?             @map("deleted_at") @db.Timestamptz(3)
+  dependent   Dependent             @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+  treatments  MedicationTreatment[]
+
+  @@unique([id, dependentId])
+  @@index([dependentId, deletedAt, createdAt, id])
+  @@map("medications")
+}
+
+model MedicationTreatment {
+  id            String                    @id @default(uuid()) @db.Uuid
+  dependentId   String                    @map("dependent_id") @db.Uuid
+  medicationId  String                    @map("medication_id") @db.Uuid
+  dosage        String                    @db.VarChar(120)
+  unit          String                    @db.VarChar(60)
+  frequency     String                    @db.VarChar(160)
+  route         String?                   @db.VarChar(100)
+  startDate     DateTime                  @map("start_date") @db.Date
+  endDate       DateTime?                 @map("end_date") @db.Date
+  continuousUse Boolean                   @default(false) @map("continuous_use")
+  instructions  String?                   @db.VarChar(2000)
+  prescribedBy  String?                   @map("prescribed_by") @db.VarChar(120)
+  reason        String?                   @db.VarChar(500)
+  notes         String?                   @db.VarChar(2000)
+  status        MedicationTreatmentStatus @default(ACTIVE)
+  completedAt   DateTime?                 @map("completed_at") @db.Timestamptz(3)
+  createdAt     DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime                  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime?                 @map("deleted_at") @db.Timestamptz(3)
+  dependent     Dependent                 @relation(fields: [dependentId], references: [id], onDelete: Restrict)
+  medication    Medication                @relation(fields: [medicationId, dependentId], references: [id, dependentId], onDelete: Restrict)
+
+  @@index([dependentId, deletedAt, createdAt, id])
+  @@index([dependentId, deletedAt, startDate, id])
+  @@index([dependentId, deletedAt, status, endDate, id])
+  @@index([medicationId, dependentId, deletedAt])
+  @@map("medication_treatments")
+}
